@@ -35,7 +35,7 @@ resource "aws_security_group" "web_sg" {
 ###alb-security-group
 ##############################
 resource "aws_security_group" "alb_sg" {
-  name        = "${var.project}-${var.environment}-web-sg"
+  name        = "${var.project}-${var.environment}-alb-sg"
   description = "allow http traffic to alb"
   vpc_id      = var.vpc_id
 
