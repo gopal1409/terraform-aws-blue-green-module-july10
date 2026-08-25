@@ -1,8 +1,100 @@
 # Terraform AWS Blue-Green Module
 
-Reusable Terraform modules for deploying a simple AWS application architecture with networking, security groups, an Ubuntu AMI data source, an Application Load Balancer, and EC2 instances registered behind the load balancer.
+> **Canva-style workflow: how Terraform calls these GitHub modules and turns them into AWS infrastructure**
 
-## Repository structure
+```text
+┌──────────────────────┐
+│  1. Your Terraform   │
+│     project          │
+│     main.tf          │
+└──────────┬───────────┘
+           │
+           │ source = git::https://github.com/...
+           v
+┌─────────────────────────────────────────────────────┐
+│  2. GitHub Terraform Module Repository              │
+│                                                     │
+│  modules/networking   ──> VPC + public/private     │
+│                            subnets                  │
+│                                                     │
+│  modules/security     ──> ALB + EC2 security       │
+│                            groups                   │
+│                                                     │
+│  modules/data         ──> Latest Ubuntu AMI         │
+│                            from SSM                 │
+│                                                     │
+│  modules/loadbalancer ──> ALB + Target Group        │
+│                            + Listener               │
+│                                                     │
+│  modules/ec2          ──> Ubuntu EC2 instances     │
+│                            registered in TG         │
+└──────────────────────────┬──────────────────────────┘
+                           │
+                           v
+                 ┌──────────────────┐
+                 │ 3. terraform init│
+                 │ Download modules │
+                 │ + providers      │
+                 └────────┬─────────┘
+                          │
+                          v
+                 ┌──────────────────┐
+                 │ 4. terraform     │
+                 │    validate      │
+                 └────────┬─────────┘
+                          │
+                          v
+                 ┌──────────────────┐
+                 │ 5. terraform plan│
+                 │ Review changes   │
+                 └────────┬─────────┘
+                          │
+                          v
+                 ┌──────────────────┐
+                 │ 6. terraform     │
+                 │    apply         │
+                 └────────┬─────────┘
+                          │
+                          v
+             ┌─────────────────────────────┐
+             │           AWS               │
+             │                             │
+             │ Internet                   │
+             │    ↓                        │
+             │    ALB                     │
+             │    ↓                        │
+             │ Target Group               │
+             │   ↙       ↘                │
+             │ EC2       EC2              │
+             │ private   private           │
+             │ subnets  subnets            │
+             └─────────────┬───────────────┘
+                           │
+                           v
+                 ┌──────────────────┐
+                 │ Terraform State  │
+                 │ Outputs / Drift  │
+                 └──────────────────┘
+
+                 Cleanup when finished
+                           │
+                           v
+                 ┌──────────────────┐
+                 │ terraform destroy│
+                 └──────────────────┘
+```
+
+## 1. What this repository provides
+
+Reusable Terraform modules for deploying an AWS application foundation:
+
+- `networking` — VPC, public subnets, private subnets, Internet Gateway and public routing
+- `security` — configurable ALB and web/EC2 security groups
+- `data` — current Ubuntu 24.04 LTS AMI lookup through AWS Systems Manager Parameter Store
+- `loadbalancer` — Application Load Balancer, target group and HTTP listener
+- `ec2` — Ubuntu EC2 instances registered behind the ALB target group
+
+## 2. Repository structure
 
 ```text
 terraform-aws-blue-green-module-july10/
@@ -17,62 +109,45 @@ terraform-aws-blue-green-module-july10/
     └── README.md
 ```
 
-## Architecture
+## 3. How to use the modules from Terraform
+
+Create a **new Terraform project**. For example:
 
 ```text
-                         Internet
-                            |
-                            v
-                 +----------------------+
-                 | Application Load     |
-                 | Balancer             |
-                 | Public Subnets       |
-                 +----------+-----------+
-                            |
-                       Target Group
-                         /       \
-                        /         \
-                       v           v
-                +-----------+ +-----------+
-                | EC2 #1    | | EC2 #2    |
-                | Ubuntu    | | Ubuntu    |
-                | Private   | | Private   |
-                | Subnet    | | Subnet    |
-                +-----------+ +-----------+
+my-application/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+└── terraform.tfvars
 ```
 
-## Use the modules from GitHub
+Your `main.tf` calls this GitHub repository using Terraform's Git source syntax.
 
-The recommended way to consume a module from this repository is to reference a Git tag rather than the moving `master` branch.
-
-For example:
+### GitHub source format
 
 ```hcl
-module "networking" {
-  source = "git::https://github.com/gopal1409/terraform-aws-blue-green-module-july10.git//terraform-bluegreen-aws/modules/networking?ref=v1.0.0"
-
-  project     = var.project
-  environment = var.environment
-  vpc_cidr    = var.vpc_cidr
-  public_subnets = var.public_subnets
-  private_subnets = var.private_subnets
-  tags        = var.tags
-}
+source = "git::https://github.com/gopal1409/terraform-aws-blue-green-module-july10.git//terraform-bluegreen-aws/modules/<module-name>?ref=<tag-or-commit>"
 ```
 
-The same GitHub source pattern is used for the other modules:
+The `//terraform-bluegreen-aws/modules/<module-name>` part tells Terraform which subdirectory is the module.
 
-```text
-https://github.com/gopal1409/terraform-aws-blue-green-module-july10.git//terraform-bluegreen-aws/modules/<module-name>?ref=<tag-or-commit>
+### Recommended versioning
+
+For reusable infrastructure, pin the module to a tag or commit instead of a moving branch:
+
+```hcl
+source = "git::https://github.com/gopal1409/terraform-aws-blue-green-module-july10.git//terraform-bluegreen-aws/modules/networking?ref=v1.0.0"
 ```
 
-> `//` is important because the Terraform modules are stored below `terraform-bluegreen-aws/modules/` inside the repository.
+You can also use a commit SHA:
 
-## End-to-end root configuration
+```hcl
+source = "git::https://github.com/gopal1409/terraform-aws-blue-green-module-july10.git//terraform-bluegreen-aws/modules/networking?ref=<commit-sha>"
+```
 
-Create a separate Terraform project and add a file such as `main.tf`.
+## 4. End-to-end Terraform configuration
 
-### 1. Terraform and AWS provider
+### Step 1 — Terraform and AWS provider
 
 ```hcl
 terraform {
@@ -91,7 +166,7 @@ provider "aws" {
 }
 ```
 
-### 2. Input variables
+### Step 2 — Root input variables
 
 ```hcl
 variable "aws_region" {
@@ -113,7 +188,7 @@ variable "environment" {
 }
 
 variable "vpc_cidr" {
-  description = "CIDR block for the VPC."
+  description = "VPC CIDR block."
   type        = string
   default     = "10.0.0.0/16"
 }
@@ -159,13 +234,14 @@ variable "private_subnets" {
 variable "tags" {
   description = "Common resource tags."
   type        = map(string)
+
   default = {
     ManagedBy = "Terraform"
   }
 }
 ```
 
-### 3. Networking module
+### Step 3 — Networking module
 
 ```hcl
 module "networking" {
@@ -180,9 +256,17 @@ module "networking" {
 }
 ```
 
-The networking module provides the VPC and subnet outputs used by the other modules. The module exposes both subnet maps and convenient subnet-ID lists.
+Creates the base network and exposes:
 
-### 4. Security module
+```text
+vpc_id
+public_subnet_ids
+public_subnet_id_list
+private_subnet_ids
+private_subnet_id_list
+```
+
+### Step 4 — Security module
 
 ```hcl
 module "security" {
@@ -193,10 +277,9 @@ module "security" {
   vpc_id      = module.networking.vpc_id
   tags        = var.tags
 
-  # Restrict these in a real environment.
   web_ingress_rules = [
     {
-      description = "HTTP from ALB"
+      description = "HTTP from VPC/ALB"
       from_port   = 80
       to_port     = 80
       protocol    = "tcp"
@@ -216,9 +299,16 @@ module "security" {
 }
 ```
 
-The security module outputs the web and ALB security-group IDs.
+Outputs:
 
-### 5. Ubuntu AMI data module
+```text
+web_sg_id
+alb_sg_id
+```
+
+> For production, restrict the EC2/web ingress rule to the ALB security group rather than opening the application port to a broad CIDR.
+
+### Step 5 — Ubuntu AMI data module
 
 ```hcl
 module "data" {
@@ -226,15 +316,15 @@ module "data" {
 }
 ```
 
-The module resolves the current Ubuntu 24.04 LTS AMI through an AWS Systems Manager public parameter instead of hard-coding an AMI ID.
-
-The result is available as:
+Output:
 
 ```hcl
 module.data.ubuntu_ami_id
 ```
 
-### 6. Application Load Balancer module
+The module resolves the Ubuntu AMI dynamically through an AWS SSM public parameter instead of hard-coding an AMI ID.
+
+### Step 6 — Load Balancer module
 
 ```hcl
 module "loadbalancer" {
@@ -247,19 +337,22 @@ module "loadbalancer" {
   security_group_ids = [module.security.alb_sg_id]
 
   target_port = 80
-
-  tags = var.tags
+  tags        = var.tags
 }
 ```
 
-The load balancer module creates:
+Outputs:
 
-- Application Load Balancer
-- Target group
-- HTTP listener
-- Target health checks
+```text
+alb_id
+a lb_arn
+alb_dns_name
+target_group_id
+target_group_arn
+listener_arn
+```
 
-### 7. EC2 module
+### Step 7 — EC2 module behind the Load Balancer
 
 ```hcl
 module "ec2" {
@@ -294,77 +387,170 @@ module "ec2" {
 }
 ```
 
-The EC2 module creates the instances and registers each instance with the ALB target group using `aws_lb_target_group_attachment`.
+Outputs:
 
-## Module inputs
+```text
+instance_ids
+private_ips
+instance_arns
+target_group_attachment_ids
+```
+
+## 5. Module dependency flow
+
+```text
+                   ┌─────────────────┐
+                   │  networking     │
+                   │  VPC + subnets  │
+                   └────────┬────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              v                           v
+     ┌─────────────────┐         ┌─────────────────┐
+     │    security     │         │      data       │
+     │ ALB SG + Web SG │         │ Ubuntu AMI      │
+     └────────┬────────┘         └────────┬────────┘
+              │                           │
+              v                           v
+     ┌─────────────────┐         ┌─────────────────┐
+     │  loadbalancer   │         │       ec2       │
+     │ ALB + Target TG │────────>│ Ubuntu instances│
+     └─────────────────┘         └─────────────────┘
+```
+
+## 6. Terraform workflow
+
+Run these commands from your **calling Terraform project**:
+
+```bash
+# 1. Verify AWS credentials
+aws sts get-caller-identity
+
+# 2. Download providers and GitHub modules
+terraform init
+
+# 3. Format the configuration
+terraform fmt -recursive
+
+# 4. Validate Terraform configuration
+terraform validate
+
+# 5. Preview infrastructure changes
+terraform plan
+
+# 6. Create/update AWS infrastructure
+terraform apply
+
+# 7. Review outputs
+terraform output
+
+# 8. Preview cleanup
+terraform plan -destroy
+
+# 9. Remove the lab infrastructure
+terraform destroy
+```
+
+## 7. Verify the ALB and EC2 targets
+
+Get the ALB DNS name:
+
+```bash
+terraform output -raw alb_dns_name
+```
+
+Check the target group:
+
+```bash
+terraform output -raw target_group_arn
+```
+
+Then:
+
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn "$(terraform output -raw target_group_arn)"
+```
+
+Expected state for healthy instances:
+
+```text
+healthy
+```
+
+## 8. Module inputs
 
 ### Networking
 
-| Input | Type | Description |
+| Variable | Type | Purpose |
 |---|---|---|
 | `project` | `string` | Project name |
 | `environment` | `string` | Environment name |
-| `vpc_cidr` | `string` | VPC CIDR block |
-| `public_subnets` | `map(object({az=string,cidr=string}))` | Public subnet definitions |
-| `private_subnets` | `map(object({az=string,cidr=string}))` | Private subnet definitions |
-| `tags` | `map(string)` | Common tags |
+| `vpc_cidr` | `string` | VPC CIDR |
+| `public_subnets` | `map(object(...))` | Public subnet definitions |
+| `private_subnets` | `map(object(...))` | Private subnet definitions |
+| `tags` | `map(string)` | Resource tags |
 
 ### Security
 
-| Input | Type | Description |
+| Variable | Type | Purpose |
 |---|---|---|
 | `project` | `string` | Project name |
 | `environment` | `string` | Environment name |
 | `vpc_id` | `string` | VPC ID |
-| `web_ingress_rules` | `list(object(...))` | Web/EC2 ingress rules |
+| `web_ingress_rules` | `list(object(...))` | EC2/web ingress rules |
 | `alb_ingress_rules` | `list(object(...))` | ALB ingress rules |
 | `egress_rules` | `list(object(...))` | Egress rules |
-| `tags` | `map(string)` | Additional tags |
+| `tags` | `map(string)` | Resource tags |
 
 ### Data
 
-| Input | Type | Default | Description |
-|---|---|---|---|
-| `ubuntu_ami_parameter` | `string` | Ubuntu 24.04 amd64 public SSM parameter | Parameter containing the Ubuntu AMI ID |
+| Variable | Type | Default |
+|---|---|---|
+| `ubuntu_ami_parameter` | `string` | Ubuntu 24.04 amd64 SSM public parameter |
 
 ### Load Balancer
 
-| Input | Type | Default | Description |
-|---|---|---:|---|
-| `project` | `string` | required | Project name |
-| `environment` | `string` | required | Environment name |
-| `vpc_id` | `string` | required | Target group VPC |
-| `subnet_ids` | `list(string)` | required | ALB subnets |
-| `security_group_ids` | `list(string)` | required | ALB security groups |
-| `internal` | `bool` | `false` | Create internal ALB |
-| `target_port` | `number` | `80` | Backend application port |
-| `target_protocol` | `string` | `HTTP` | Backend protocol |
-| `target_type` | `string` | `instance` | Target type |
-| `health_check_path` | `string` | `/` | Health-check path |
-| `enable_deletion_protection` | `bool` | `false` | ALB deletion protection |
-| `tags` | `map(string)` | `{}` | Tags |
+| Variable | Type | Default |
+|---|---|---:|
+| `project` | `string` | required |
+| `environment` | `string` | required |
+| `vpc_id` | `string` | required |
+| `subnet_ids` | `list(string)` | required |
+| `security_group_ids` | `list(string)` | required |
+| `internal` | `bool` | `false` |
+| `idle_timeout` | `number` | `60` |
+| `enable_deletion_protection` | `bool` | `false` |
+| `target_port` | `number` | `80` |
+| `target_protocol` | `string` | `HTTP` |
+| `target_type` | `string` | `instance` |
+| `health_check_path` | `string` | `/` |
+| `health_check_protocol` | `string` | `HTTP` |
+| `health_check_matcher` | `string` | `200` |
+| `tags` | `map(string)` | `{}` |
 
 ### EC2
 
-| Input | Type | Default | Description |
-|---|---|---:|---|
-| `project` | `string` | required | Project name |
-| `environment` | `string` | required | Environment name |
-| `ami_id` | `string` | required | AMI ID |
-| `instance_type` | `string` | `t3.micro` | EC2 instance type |
-| `instance_count` | `number` | `2` | Number of instances |
-| `subnet_ids` | `list(string)` | required | Instance subnets |
-| `security_group_ids` | `list(string)` | required | EC2 security groups |
-| `associate_public_ip_address` | `bool` | `false` | Public IP assignment |
-| `user_data` | `string` | `null` | Instance initialization script |
-| `attach_to_load_balancer` | `bool` | `true` | Register instances in target group |
-| `target_group_arn` | `string` | `null` | Target group ARN |
-| `target_port` | `number` | `80` | Backend port |
-| `tags` | `map(string)` | `{}` | Tags |
+| Variable | Type | Default |
+|---|---|---:|
+| `project` | `string` | required |
+| `environment` | `string` | required |
+| `ami_id` | `string` | required |
+| `instance_type` | `string` | `t3.micro` |
+| `instance_count` | `number` | `2` |
+| `subnet_ids` | `list(string)` | required |
+| `security_group_ids` | `list(string)` | required |
+| `associate_public_ip_address` | `bool` | `false` |
+| `user_data` | `string` | `null` |
+| `attach_to_load_balancer` | `bool` | `true` |
+| `target_group_arn` | `string` | `null` |
+| `target_port` | `number` | `80` |
+| `tags` | `map(string)` | `{}` |
 
-## Module outputs
+## 9. Module outputs
 
-### Networking outputs
+### Networking
 
 ```text
 vpc_id
@@ -374,20 +560,20 @@ private_subnet_ids
 private_subnet_id_list
 ```
 
-### Security outputs
+### Security
 
 ```text
 web_sg_id
 alb_sg_id
 ```
 
-### Data outputs
+### Data
 
 ```text
 ubuntu_ami_id
 ```
 
-### Load Balancer outputs
+### Load Balancer
 
 ```text
 alb_id
@@ -398,7 +584,7 @@ target_group_arn
 listener_arn
 ```
 
-### EC2 outputs
+### EC2
 
 ```text
 instance_ids
@@ -407,101 +593,44 @@ instance_arns
 target_group_attachment_ids
 ```
 
-## Root outputs
+## 10. Recommended production pattern
 
-In your calling project, useful outputs can be exposed with:
-
-```hcl
-output "alb_dns_name" {
-  description = "DNS name of the application load balancer."
-  value       = module.loadbalancer.alb_dns_name
-}
-
-output "ec2_private_ips" {
-  description = "Private IP addresses of the application instances."
-  value       = module.ec2.private_ips
-}
-
-output "ubuntu_ami_id" {
-  description = "AMI selected by the data module."
-  value       = module.data.ubuntu_ami_id
-}
+```text
+Internet
+   |
+ HTTPS :443
+   |
+   v
++-----------------------+
+| ALB public subnets    |
+| ACM certificate       |
+| WAF (optional)        |
++-----------+-----------+
+            |
+            v
++-----------------------+
+| Target Group          |
++-----------+-----------+
+            |
+            v
++-----------------------+
+| EC2 private subnets   |
+| No public IP          |
+| ALB-only ingress      |
++-----------------------+
 ```
 
-## Initialize and deploy
+For production, consider Auto Scaling Groups for EC2 capacity, HTTPS/ACM, ALB access logs, WAF where needed, Systems Manager Session Manager instead of public SSH, tightly scoped security-group rules, encrypted remote Terraform state, and pinned module versions.
 
-From the root of your calling Terraform project:
+## 11. Security
 
-```bash
-aws sts get-caller-identity
-terraform init
-terraform fmt -recursive
-terraform validate
-terraform plan
-terraform apply
-```
+Never commit AWS access keys, secret keys, private keys, passwords, or sensitive Terraform state. Prefer the AWS standard credential chain, IAM roles, IAM Identity Center, or OIDC-based short-lived credentials.
 
-After deployment:
-
-```bash
-terraform output alb_dns_name
-```
-
-Open the returned ALB DNS name in a browser. The ALB forwards traffic to the registered EC2 instances.
-
-## Verify the target group
-
-```bash
-aws elbv2 describe-target-health \
-  --target-group-arn "$(terraform output -raw target_group_arn)"
-```
-
-Healthy EC2 instances should appear with a `healthy` state.
-
-## Destroy the lab
+## 12. Cleanup
 
 ```bash
 terraform plan -destroy
 terraform destroy
 ```
 
-## Blue-green extension
-
-The current modules provide the building blocks for blue-green deployments. A typical next step is to create two target groups and two EC2 fleets:
-
-```text
-                    ALB
-                     |
-              Listener / Rule
-                 /       \
-                /         \
-          Blue TG       Green TG
-             |              |
-        Blue EC2s      Green EC2s
-```
-
-Traffic can then be shifted between blue and green target groups through listener rules or weighted forwarding. Keep the two environments independently deployable so rollback means switching traffic back to the previous target group.
-
-## Production considerations
-
-This repository is designed as a teaching/reusable-module foundation. Before production use, consider:
-
-- HTTPS listener with an ACM certificate
-- ALB access logging
-- WAF where required
-- Auto Scaling Groups instead of fixed EC2 instances
-- IAM roles instead of instance credentials embedded in files
-- Systems Manager Session Manager instead of public SSH
-- Private EC2 subnets with controlled outbound access
-- A dedicated security group rule allowing application traffic from the ALB security group
-- Encrypted and remote Terraform state with access controls and locking
-- Versioned module references using Git tags or commit SHAs
-- CI validation with `terraform fmt`, `terraform validate`, and security scanning
-
-## Security
-
-Never commit AWS access keys, secret keys, private keys, or Terraform state containing sensitive information. Use the normal AWS credential chain, IAM roles, IAM Identity Center, or OIDC-based short-lived credentials.
-
-## License / usage
-
-This repository is intended for learning and reusable Terraform module development. Review each AWS resource's cost, availability, security, and regional constraints before applying it to a real account.
+The module repository is intended as a reusable learning foundation for AWS Terraform and blue-green deployment patterns.
