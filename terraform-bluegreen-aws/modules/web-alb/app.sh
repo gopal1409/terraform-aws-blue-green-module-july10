@@ -10,8 +10,8 @@ cat > /var/www/html/index.html <<EOF
 <html>
   <head><title>Terraform Web Server</title></head>
   <body>
-    <h1>Welcome to ${var.project_name}</h1>
-    <p>Environment: ${var.environment}</p>
+    <h1>Welcome to ${project_name}</h1>
+    <p>Environment: ${environment}</p>
     <p>Server: $(hostname)</p>
   </body>
 </html>
